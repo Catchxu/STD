@@ -152,8 +152,8 @@ def set_patch(adata: ad.AnnData):
 
 
 def read(data_dir: str, data_name: str, preprocess: bool = True,
-         return_type: Literal['anndata', 'graph'] = 'anndata',
-         n_neighbors: int = 3, patch_size: Optional[int] = None,
+         return_type: Literal['anndata', 'graph'] = 'graph',
+         n_neighbors: int = 4, patch_size: Optional[int] = None,
          train_mode: bool = True):
     input_dir = data_dir + data_name + '.h5ad'
     adata = sc.read(input_dir)
@@ -175,9 +175,9 @@ def read(data_dir: str, data_name: str, preprocess: bool = True,
 
 def read_cross(ref_dir: str, tgt_dir:str, ref_name: str, tgt_name: str, 
                preprocess: bool = True, n_genes: int = 3000, patch_size: Optional[int] = None,
-               return_type: Literal['anndata', 'graph'] = 'anndata', **kwargs):
-    ref, ref_img, ref_pos = read(ref_dir, ref_name, preprocess=False)
-    tgt, tgt_img, tgt_pos = read(tgt_dir, tgt_name, preprocess=False)
+               return_type: Literal['anndata', 'graph'] = 'graph', **kwargs):
+    ref, ref_img, ref_pos = read(ref_dir, ref_name, preprocess=False, return_type='anndata')
+    tgt, tgt_img, tgt_pos = read(tgt_dir, tgt_name, preprocess=False, return_type='anndata')
     overlap_gene = list(set(ref.var_names) & set(tgt.var_names))
     ref = ref[:, overlap_gene]
     tgt = tgt[:, overlap_gene]
@@ -201,7 +201,7 @@ def read_cross(ref_dir: str, tgt_dir:str, ref_name: str, tgt_name: str,
             patch_size = set_patch(ref)
         ref_g = Build_graph(ref, ref_img, ref_pos,
                             patch_size=patch_size, **kwargs).g
-        tgt_g = Build_graph(ref, ref_img, ref_pos,
+        tgt_g = Build_graph(tgt, tgt_img, tgt_pos,
                             patch_size=patch_size, **kwargs).g
         return ref_g, tgt_g
 
@@ -210,7 +210,7 @@ def read_multi_graph(input_dir: str, data_name: List[str], patch_size: Optional[
                      preprocess: bool = True, n_genes: int = 3000, **kwargs):
     adatas, images, positions = [], [], []
     for d in data_name:
-        adata, image, position = read(input_dir, d, preprocess=False)
+        adata, image, position = read(input_dir, d, preprocess=False, return_type='anndata')
         adatas.append(adata)
         images.append(image)
         positions.append(position)

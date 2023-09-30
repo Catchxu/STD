@@ -45,18 +45,18 @@ def interpolate(real_data, fake_data, cuda):
     return interpolated
 
 
-def calculate_gradient_penalty(blocks, real_g, real_p, fake_g, fake_p, D):
+def calculate_gradient_penalty(real_g, real_p, fake_g, fake_p, D):
     '''calculate gradient penalty for training discriminator'''
     cuda = True if torch.cuda.is_available() else False
     inter_g = interpolate(real_g, fake_g, cuda)
     inter_p = interpolate(real_p, fake_p, cuda)
 
     # calculate probability of interpolated examples
-    prob_interpolated = D(blocks, inter_g, inter_p)
+    prob_interpolated = D(inter_g, inter_p)
 
     # calculate gradients of probabilities with respect to examples
     gradients = autograd.grad(outputs=prob_interpolated,
-                              inputs=(blocks, inter_g, inter_p),
+                              inputs=(inter_g, inter_p),
                               grad_outputs=torch.ones(prob_interpolated.size()).cuda()
                               if cuda else torch.ones(prob_interpolated.size()),
                               create_graph=True, retain_graph=True)[0]
