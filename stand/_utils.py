@@ -69,7 +69,7 @@ def evaluate(y_true, y_score):
     """calculate evaluation metrics"""
     y_true = pd.Series(y_true)
     y_score = pd.Series(y_score)
-
+    
     roc_auc = metrics.roc_auc_score(y_true, y_score)
     ap = metrics.average_precision_score(y_true, y_score)
     

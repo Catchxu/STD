@@ -11,6 +11,8 @@ from typing import Literal, Optional, List
 import torchvision.transforms as transforms
 from sklearn.neighbors import NearestNeighbors
 
+from ._utils import seed_everything
+
 
 class Build_graph:
     def __init__(self, adata: ad.AnnData, image: np.ndarray,
@@ -28,7 +30,7 @@ class Build_graph:
         self.g = dgl.add_self_loop(self.g)
 
         self.g.ndata['patch'] = self.get_patch()
-        self.g.ndata['gene'] = torch.Tensor(adata.X)
+        self.g.ndata['gene'] = self.get_gene()
 
     def get_edge(self):
         nbrs = NearestNeighbors(n_neighbors=self.n_neighbors+1)
@@ -44,20 +46,36 @@ class Build_graph:
             
         img = Image.fromarray(self.image)
         r = np.ceil(self.patch_size/2).astype(int)
+
         trans = transforms.Compose([
             transforms.ColorJitter(0.5, 0.5, 0.5),
             transforms.RandomHorizontalFlip(),
             transforms.RandomRotation(degrees=180)
         ])
-
-        patch = []
+ 
+        preprocess = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+        ])
+        
+        p_list = []
         for i in range(len(self.position)):
             x, y = self.position[i, :]
             p = img.crop((x - r, y - r, x + r, y + r))
             if self.train_mode:
                 p = trans(p)
-            patch.append(np.array(p, dtype=np.float32).reshape(3, 2*r, 2*r)/255)
-        return torch.Tensor(np.stack(patch))
+            p = preprocess(p)
+            p_list.append(p.reshape(3, 2*r, 2*r))
+        return torch.stack(p_list)
+
+    def get_gene(self):
+        X = torch.Tensor(self.adata.X)
+        X_max, X_min = torch.max(X, 1)[0], torch.min(X, 1)[0]
+        dst = (X_max - X_min).unsqueeze(1)
+        X_min = X_min.unsqueeze(1)
+        X_norm = torch.sub(X, X_min).true_divide(dst)
+        X_norm = (X_norm - 0.5).true_divide(0.5)
+        return X_norm
 
 
 class Build_multi_graph:
@@ -80,7 +98,7 @@ class Build_multi_graph:
 
         self.g.ndata['batch'] = self.batch
         self.g.ndata['patch'] = self.get_patch()
-        self.g.ndata['gene'] = torch.Tensor(self.adata.X)
+        self.g.ndata['gene'] = self.get_gene()
 
     def get_batch(self):
         adata = []
@@ -118,10 +136,16 @@ class Build_multi_graph:
 
             position = self.position[i]
             r = np.ceil(self.patch_size/2).astype(int)
+
             trans = transforms.Compose([
                 transforms.ColorJitter(0.5, 0.5, 0.5),
                 transforms.RandomHorizontalFlip(),
                 transforms.RandomRotation(degrees=180)
+            ])
+            
+            preprocess = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
             ])
 
             for i in range(len(position)):
@@ -129,8 +153,18 @@ class Build_multi_graph:
                 p = img.crop((x - r, y - r, x + r, y + r))
                 if self.train_mode:
                     p = trans(p)
-                p_list.append(np.array(p, dtype=np.float32).reshape(3, 2*r, 2*r)/255)
-        return torch.Tensor(np.stack(p_list))
+                p = preprocess(p)
+                p_list.append(p.reshape(3, 2*r, 2*r))
+        return torch.stack(p_list)
+    
+    def get_gene(self):
+        X = torch.Tensor(self.adata.X)
+        X_max, X_min = torch.max(X, 1)[0], torch.min(X, 1)[0]
+        dst = (X_max - X_min).unsqueeze(1)
+        X_min = X_min.unsqueeze(1)
+        X_norm = torch.sub(X, X_min).true_divide(dst)
+        X_norm = (X_norm - 0.5).true_divide(0.5)
+        return X_norm
 
 
 def preprocess_data(adata: ad.AnnData):
@@ -155,6 +189,7 @@ def read(data_dir: str, data_name: str, preprocess: bool = True,
          return_type: Literal['anndata', 'graph'] = 'graph',
          n_neighbors: int = 4, patch_size: Optional[int] = None,
          train_mode: bool = True):
+    seed_everything(0)
     input_dir = data_dir + data_name + '.h5ad'
     adata = sc.read(input_dir)
     image = next(iter(adata.uns['spatial'].values()))['images']['hires']
@@ -176,6 +211,7 @@ def read(data_dir: str, data_name: str, preprocess: bool = True,
 def read_cross(ref_dir: str, tgt_dir:str, ref_name: str, tgt_name: str, 
                preprocess: bool = True, n_genes: int = 3000, patch_size: Optional[int] = None,
                return_type: Literal['anndata', 'graph'] = 'graph', **kwargs):
+    seed_everything(0)
     ref, ref_img, ref_pos = read(ref_dir, ref_name, preprocess=False, return_type='anndata')
     tgt, tgt_img, tgt_pos = read(tgt_dir, tgt_name, preprocess=False, return_type='anndata')
     overlap_gene = list(set(ref.var_names) & set(tgt.var_names))
@@ -208,6 +244,7 @@ def read_cross(ref_dir: str, tgt_dir:str, ref_name: str, tgt_name: str,
 
 def read_multi_graph(input_dir: str, data_name: List[str], patch_size: Optional[int] = None,
                      preprocess: bool = True, n_genes: int = 3000, **kwargs):
+    seed_everything(0)
     adatas, images, positions = [], [], []
     for d in data_name:
         adata, image, position = read(input_dir, d, preprocess=False, return_type='anndata')

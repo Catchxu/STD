@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from dgl.nn import GATv2Conv
 
 from ._block import MemoryBlock
-
+from .transformerfusion import EncoderLayer, Encoder
 
 class GAT(nn.Module):
     def __init__(self, in_dim, out_dim, nhead):
@@ -55,7 +55,7 @@ class GeneDecoder(nn.Module):
     
     def forward(self, z):
         feat = self.fc(z)
-        return F.relu(feat)
+        return torch.tanh(feat)
 
 
 class ResidualBlock(nn.Module):
@@ -217,13 +217,41 @@ class ImageDecoder(nn.Module):
             if self.MultiResSkips:
                 z += self.multi_res_skip_list[i](z_top)
 
-        z = self.output_conv(z)
-        return z
+        x = self.output_conv(z)
+        return torch.tanh(x)
 
+
+class AttentionFusion(nn.Module):
+    def __init__(self, dim=256, dropout=0.3, alpha=0.2):
+        super().__init__()
+
+        self.dim = dim
+        self.dropout = dropout
+        self.LeakyReLU = nn.LeakyReLU(alpha)
+        self.ag = nn.Parameter(torch.empty(size=(2*dim, 1)))
+        self.ap = nn.Parameter(torch.empty(size=(2*dim, 1)))
+    
+    def attention_score(self, z):
+        Wh1 = torch.matmul(z, self.ag)
+        Wh2 = torch.matmul(z, self.ap)
+
+        # broadcast add
+        e = torch.cat((Wh1, Wh2), 1)
+        return self.LeakyReLU(e)
+    
+    def forward(self, z_g, z_p):
+        e = self.attention_score(torch.cat([z_g, z_p], 1))
+        lamda = F.softmax(e, dim=1)
+        lamda = F.dropout(lamda, self.dropout)
+
+        z1  = lamda[:,0].repeat(self.dim, 1).T * z_g
+        z2  = lamda[:,1].repeat(self.dim, 1).T * z_p
+        z  = z1 + z2
+        return z
 
 class STNet(nn.Module):
     def __init__(self, patch_size, in_dim, out_dim=[512, 256], z_dim=256,
-                 mem_dim=2048, thres=0.005, tem=0.5, **kwargs):
+                 mem_dim=1024, thres=0.005, tem=0.5, **kwargs):
         super().__init__()
 
         self.GeneEncoder = GeneEncoder(in_dim, out_dim, nheads=[4, 1])
@@ -232,37 +260,30 @@ class STNet(nn.Module):
         self.ImageEncoder = ImageEncoder(patch_size, z_dim=z_dim, **kwargs)
         self.ImageDecoder = ImageDecoder(patch_size, z_dim=z_dim, **kwargs)
 
-        layer = nn.TransformerEncoderLayer(d_model=out_dim[1] + z_dim, nhead=4)
-        self.Fusion = nn.TransformerEncoder(layer, num_layers=3)
+        #self.Fusion = AttentionFusion(dim=z_dim)
+        encoder_layer = EncoderLayer(d_model=z_dim, n_heads=4, mask_flag=False)
+        self.Fusion = Encoder(encoder_layer, num_layers=3, d_model=z_dim)#3
+        self.Memory = MemoryBlock(mem_dim, z_dim, thres, tem)
 
-        self.Memory = MemoryBlock(mem_dim, out_dim[-1]+z_dim, thres, tem)
-    
     def encode(self, g_block, feat_g, feat_p):
         z_g = self.GeneEncoder(g_block, feat_g)
         z_p = self.ImageEncoder(g_block[1], feat_p)
-        return torch.cat([z_g, z_p], dim=1)
+        return z_g, z_p
 
     def decode(self, z):
-        z_g, z_p = torch.chunk(z, 2, dim=1)
-        feat_g = self.GeneDecoder(z_g)
-        feat_p = self.ImageDecoder(z_p)
+        feat_g = self.GeneDecoder(z)
+        feat_p = self.ImageDecoder(z)
         return feat_g, feat_p
-    
-    def TFfusion(self, z):
-        z = z.unsqueeze(0)
-        z = self.Fusion(z)
-        return z.squeeze(0)
 
     def pretrain(self, g_block, feat_g, feat_p):
-        z = self.encode(g_block, feat_g, feat_p)
-        z = self.TFfusion(z)
+        z_g, z_p = self.encode(g_block, feat_g, feat_p)
+        z = self.Fusion(z_g, z_p)
         feat_g, feat_p = self.decode(z)
         return feat_g, feat_p
     
     def forward(self, g_block, feat_g, feat_p):
-        z = self.TFfusion(self.encode(g_block, feat_g, feat_p))
+        z_g, z_p = self.encode(g_block, feat_g, feat_p)
+        z = self.Fusion(z_g, z_p)
         mem_z = self.Memory(z)
         feat_g, feat_p = self.decode(mem_z)
         return z, feat_g, feat_p
-        
-

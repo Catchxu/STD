@@ -33,7 +33,7 @@ class MemoryBlock(nn.Module):
 
         self.mem_ptr[0] = ptr
 
-    def attention(self, input):
+    def forward(self, input):
         att_weight = torch.mm(input, self.mem.T)  # input x mem^T, (BxC) x (CxM) = B x M
         att_weight = F.softmax(att_weight/self.tem, dim=1)  # B x M
 
@@ -44,7 +44,3 @@ class MemoryBlock(nn.Module):
 
         output = torch.mm(att_weight, self.mem)  # AttWeight x mem, (BxM) x (MxC) = B x C
         return output
-
-    def forward(self, x):
-        x = self.attention(x)
-        return x

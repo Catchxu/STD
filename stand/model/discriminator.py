@@ -101,6 +101,29 @@ class ResNet(nn.Module):
         z = self.fc(feat.flatten(1))
         return z
 
+    
+class CriticNet(nn.Module):
+    def __init__(self, in_dim=256, out_dim=64):
+        super().__init__()
+        
+        self.initial = nn.Sequential(
+            SNorm(nn.Linear(in_dim*2, in_dim)),
+            nn.LeakyReLU(0.2, inplace=True),
+            SNorm(nn.Linear(in_dim, out_dim)),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+
+        self.FCBlock = nn.Sequential(
+            SNorm(nn.Linear(out_dim, out_dim)),
+            nn.LeakyReLU(0.2, inplace=True),
+            SNorm(nn.Linear(out_dim, out_dim)),
+            nn.LeakyReLU(0.2, inplace=True),
+        )
+    
+    def forward(self, dis_g, dis_p):
+        x = torch.cat([dis_g, dis_p], dim=1)
+        z = self.initial(x)
+        return z + self.FCBlock(z)
 
 class Discriminator(nn.Module):
     def __init__(self, patch_size, in_dim, out_dim=[512, 256], z_dim=256):
@@ -109,12 +132,12 @@ class Discriminator(nn.Module):
             LinearBlock(in_dim, out_dim[0]),
             LinearBlock(out_dim[0], out_dim[1])
         )
-
         self.image_dis = ResNet(patch_size, z_dim=z_dim)
-        self.critic = nn.Linear(out_dim[-1]+z_dim, 1)
+
+        self.critic = CriticNet(in_dim=z_dim, out_dim=64)
 
     def forward(self,feat_g, feat_p):
         dis_g = self.gene_dis(feat_g)
         dis_p = self.image_dis(feat_p)
-        dis = self.critic(torch.cat([dis_g, dis_p], dim=1))
+        dis = self.critic(dis_g, dis_p)
         return dis
